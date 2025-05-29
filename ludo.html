@@ -1,0 +1,331 @@
+import pygame
+import sys
+import random
+import time
+
+# Initialize pygame
+pygame.init()
+
+# Constants
+WIDTH, HEIGHT = 800, 800
+BOARD_SIZE = 600
+MARGIN = (WIDTH - BOARD_SIZE) // 2
+FPS = 60
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+GRAY = (200, 200, 200)
+BOARD_COLOR = (245, 222, 179)
+
+# Player colors
+COLORS = [RED, GREEN, YELLOW, BLUE]
+PLAYER_NAMES = ["Red", "Green", "Yellow", "Blue"]
+
+# Set up the display
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Ludo Game")
+clock = pygame.time.Clock()
+
+# Load fonts
+font = pygame.font.SysFont('Arial', 24)
+large_font = pygame.font.SysFont('Arial', 36)
+
+class Token:
+    def __init__(self, player, number, start_pos, color):
+        self.player = player
+        self.number = number
+        self.color = color
+        self.pos = start_pos
+        self.x, self.y = start_pos
+        self.radius = 20
+        self.home = False
+        self.finished = False
+        self.path_index = 0
+        self.path = []
+        
+    def draw(self):
+        if not self.home and not self.finished:
+            pygame.draw.circle(screen, self.color, (self.x, self.y), self.radius)
+            pygame.draw.circle(screen, BLACK, (self.x, self.y), self.radius, 2)
+            text = font.render(str(self.number+1), True, BLACK)
+            screen.blit(text, (self.x - 5, self.y - 8))
+            
+    def move(self, steps):
+        if self.finished:
+            return False
+            
+        if self.home:
+            if steps == 6:
+                self.home = False
+                self.path_index = 0
+                self.update_position()
+                return True
+            return False
+            
+        new_index = self.path_index + steps
+        if new_index >= len(self.path):
+            return False
+            
+        self.path_index = new_index
+        self.update_position()
+        
+        # Check if reached finish
+        if self.path_index == len(self.path) - 1:
+            self.finished = True
+        return True
+        
+    def update_position(self):
+        if not self.home and not self.finished:
+            self.x, self.y = self.path[self.path_index]
+
+class Player:
+    def __init__(self, number, color, name, start_pos, home_pos, finish_pos):
+        self.number = number
+        self.color = color
+        self.name = name
+        self.tokens = []
+        self.start_pos = start_pos
+        self.home_pos = home_pos
+        self.finish_pos = finish_pos
+        self.finished_tokens = 0
+        
+        # Create tokens
+        for i in range(4):
+            token = Token(self.number, i, home_pos[i], color)
+            self.tokens.append(token)
+            
+    def setup_path(self, common_path, entry_point):
+        # Create path for each token
+        for token in self.tokens:
+            # Path from home to entry point
+            path = []
+            
+            # Path from entry point through common path
+            start_index = common_path.index(entry_point)
+            path.extend(common_path[start_index:] + common_path[:start_index])
+            
+            # Add finish path (last 5 steps to home)
+            finish_x, finish_y = self.finish_pos
+            step_x = (finish_x - path[-1][0]) / 5
+            step_y = (finish_y - path[-1][1]) / 5
+            
+            for i in range(1, 6):
+                path.append((int(path[-1][0] + step_x), int(path[-1][1] + step_y)))
+            
+            token.path = path
+            
+    def draw_tokens(self):
+        for token in self.tokens:
+            token.draw()
+            
+    def draw_home(self):
+        for i, pos in enumerate(self.home_pos):
+            pygame.draw.circle(screen, self.color, pos, 25)
+            pygame.draw.circle(screen, BLACK, pos, 25, 2)
+            text = font.render(str(i+1), True, BLACK)
+            screen.blit(text, (pos[0] - 5, pos[1] - 8))
+            
+    def all_tokens_finished(self):
+        return all(token.finished for token in self.tokens)
+
+class LudoGame:
+    def __init__(self):
+        self.players = []
+        self.current_player = 0
+        self.dice_value = 1
+        self.rolled = False
+        self.game_over = False
+        self.winner = None
+        self.common_path = []
+        
+        self.setup_board()
+        self.create_players()
+        self.setup_paths()
+        
+    def setup_board(self):
+        # Create the common path positions
+        # This is a simplified path - in a real game, it would be more precise
+        center_x, center_y = WIDTH // 2, HEIGHT // 2
+        radius = BOARD_SIZE // 2 - 50
+        
+        # Create circular path (simplified)
+        for angle in range(0, 360, 6):
+            rad = angle * 3.14159 / 180
+            x = center_x + radius * pygame.math.Vector2(1, 0).rotate(angle).x
+            y = center_y + radius * pygame.math.Vector2(1, 0).rotate(angle).y
+            self.common_path.append((int(x), int(y)))
+            
+    def create_players(self):
+        # Define starting positions for each player's home area
+        red_home = [(MARGIN + 100, MARGIN + 100), (MARGIN + 100, MARGIN + 200),
+                   (MARGIN + 200, MARGIN + 100), (MARGIN + 200, MARGIN + 200)]
+        green_home = [(WIDTH - MARGIN - 100, MARGIN + 100), (WIDTH - MARGIN - 100, MARGIN + 200),
+                     (WIDTH - MARGIN - 200, MARGIN + 100), (WIDTH - MARGIN - 200, MARGIN + 200)]
+        yellow_home = [(WIDTH - MARGIN - 100, HEIGHT - MARGIN - 100), (WIDTH - MARGIN - 100, HEIGHT - MARGIN - 200),
+                      (WIDTH - MARGIN - 200, HEIGHT - MARGIN - 100), (WIDTH - MARGIN - 200, HEIGHT - MARGIN - 200)]
+        blue_home = [(MARGIN + 100, HEIGHT - MARGIN - 100), (MARGIN + 100, HEIGHT - MARGIN - 200),
+                    (MARGIN + 200, HEIGHT - MARGIN - 100), (MARGIN + 200, HEIGHT - MARGIN - 200)]
+        
+        # Define finish positions (center of each home quadrant)
+        red_finish = (MARGIN + 150, MARGIN + 150)
+        green_finish = (WIDTH - MARGIN - 150, MARGIN + 150)
+        yellow_finish = (WIDTH - MARGIN - 150, HEIGHT - MARGIN - 150)
+        blue_finish = (MARGIN + 150, HEIGHT - MARGIN - 150)
+        
+        # Define entry points to the common path
+        red_entry = self.common_path[0]  # 12 o'clock position
+        green_entry = self.common_path[len(self.common_path)//4]  # 3 o'clock
+        yellow_entry = self.common_path[len(self.common_path)//2]  # 6 o'clock
+        blue_entry = self.common_path[3*len(self.common_path)//4]  # 9 o'clock
+        
+        # Create players
+        self.players.append(Player(0, RED, "Red", red_entry, red_home, red_finish))
+        self.players.append(Player(1, GREEN, "Green", green_entry, green_home, green_finish))
+        self.players.append(Player(2, YELLOW, "Yellow", yellow_entry, yellow_home, yellow_finish))
+        self.players.append(Player(3, BLUE, "Blue", blue_entry, blue_home, blue_finish))
+        
+    def setup_paths(self):
+        for i, player in enumerate(self.players):
+            entry_point = self.common_path[i * len(self.common_path)//4]
+            player.setup_path(self.common_path, entry_point)
+            
+    def roll_dice(self):
+        if not self.rolled and not self.game_over:
+            self.dice_value = random.randint(1, 6)
+            self.rolled = True
+            return True
+        return False
+    
+    def handle_click(self, pos):
+        if self.game_over or not self.rolled:
+            return
+            
+        player = self.players[self.current_player]
+        
+        # Check if any token was clicked
+        for token in player.tokens:
+            if not token.home and not token.finished:
+                dx = token.x - pos[0]
+                dy = token.y - pos[1]
+                distance = (dx*dx + dy*dy) ** 0.5
+                
+                if distance <= token.radius:
+                    if token.move(self.dice_value):
+                        self.next_turn()
+                    return
+                    
+        # If no token was clicked and rolled a 6, try to bring a new token out
+        if self.dice_value == 6:
+            for token in player.tokens:
+                if token.home:
+                    if token.move(6):  # 6 will bring it out
+                        self.next_turn()
+                    return
+                    
+    def next_turn(self):
+        # Only switch players if they didn't roll a 6
+        if self.dice_value != 6:
+            self.current_player = (self.current_player + 1) % len(self.players)
+        self.rolled = False
+        
+        # Check for winner
+        for player in self.players:
+            if player.all_tokens_finished():
+                self.game_over = True
+                self.winner = player
+                break
+                
+    def draw_board(self):
+        # Draw board background
+        screen.fill(BOARD_COLOR)
+        pygame.draw.rect(screen, BLACK, (MARGIN, MARGIN, BOARD_SIZE, BOARD_SIZE), 5)
+        
+        # Draw center cross
+        center_x, center_y = WIDTH // 2, HEIGHT // 2
+        pygame.draw.line(screen, BLACK, (MARGIN, center_y), (WIDTH - MARGIN, center_y), 5)
+        pygame.draw.line(screen, BLACK, (center_x, MARGIN), (center_x, HEIGHT - MARGIN), 5)
+        
+        # Draw colored home areas
+        pygame.draw.rect(screen, RED, (MARGIN, MARGIN, BOARD_SIZE//2, BOARD_SIZE//2))
+        pygame.draw.rect(screen, GREEN, (center_x, MARGIN, BOARD_SIZE//2, BOARD_SIZE//2))
+        pygame.draw.rect(screen, YELLOW, (center_x, center_y, BOARD_SIZE//2, BOARD_SIZE//2))
+        pygame.draw.rect(screen, BLUE, (MARGIN, center_y, BOARD_SIZE//2, BOARD_SIZE//2))
+        
+        # Draw common path (simplified)
+        for i in range(len(self.common_path)):
+            pygame.draw.circle(screen, GRAY, self.common_path[i], 5)
+            
+    def draw_ui(self):
+        # Draw current player info
+        player = self.players[self.current_player]
+        text = large_font.render(f"{player.name}'s Turn", True, player.color)
+        screen.blit(text, (WIDTH//2 - text.get_width()//2, 20))
+        
+        # Draw dice
+        pygame.draw.rect(screen, WHITE, (WIDTH//2 - 30, 70, 60, 60))
+        pygame.draw.rect(screen, BLACK, (WIDTH//2 - 30, 70, 60, 60), 2)
+        
+        if self.rolled:
+            # Draw dice value
+            text = large_font.render(str(self.dice_value), True, BLACK)
+            screen.blit(text, (WIDTH//2 - text.get_width()//2, 80))
+        else:
+            # Draw "Roll" button
+            text = font.render("Roll", True, BLACK)
+            screen.blit(text, (WIDTH//2 - text.get_width()//2, 85))
+            
+        # Draw instructions
+        if not self.rolled and not self.game_over:
+            text = font.render("Click to roll dice", True, BLACK)
+            screen.blit(text, (WIDTH//2 - text.get_width()//2, 150))
+        elif self.rolled and not self.game_over:
+            text = font.render("Click on a token to move", True, BLACK)
+            screen.blit(text, (WIDTH//2 - text.get_width()//2, 150))
+            
+        # Draw game over message
+        if self.game_over:
+            text = large_font.render(f"{self.winner.name} Wins!", True, self.winner.color)
+            screen.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT - 50))
+            
+    def draw(self):
+        self.draw_board()
+        
+        # Draw player homes and tokens
+        for player in self.players:
+            player.draw_home()
+            player.draw_tokens()
+            
+        self.draw_ui()
+
+def main():
+    game = LudoGame()
+    
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                pos = pygame.mouse.get_pos()
+                
+                # Check if click is on dice roll area
+                if (WIDTH//2 - 30 <= pos[0] <= WIDTH//2 + 30 and 
+                    70 <= pos[1] <= 130 and not game.rolled):
+                    game.roll_dice()
+                else:
+                    game.handle_click(pos)
+                    
+        game.draw()
+        pygame.display.flip()
+        clock.tick(FPS)
+        
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
